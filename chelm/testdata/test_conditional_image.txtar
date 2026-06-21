@@ -1,0 +1,99 @@
+# Conditional image block - metrics sidecar enabled
+chelm test cg.json --chart=chart
+cmp stdout expected.json
+
+-- cg.json --
+{
+  "images": {
+    "app": {
+      "values": {
+        "image": "${ref}"
+      }
+    },
+    "metrics": {
+      "values": {
+        "metrics": {"image": "${ref}"}
+      }
+    }
+  },
+  "test": {
+    "cases": [
+      {"name": "default", "images": ["app"]},
+      {"name": "with-metrics", "images": ["app", "metrics"], "values": {"metrics": {"enabled": true}}}
+    ]
+  }
+}
+
+-- chart/Chart.yaml --
+apiVersion: v2
+name: test-chart
+version: 0.1.0
+
+-- chart/templates/deployment.yaml --
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.image }}
+        {{- if .Values.metrics.enabled }}
+        - name: metrics
+          image: {{ .Values.metrics.image }}
+        {{- end }}
+
+-- chart/values.yaml --
+image: nginx:latest
+metrics:
+  enabled: false
+  image: prom/statsd-exporter:v0.26.0
+
+-- expected.json --
+{
+  "passed": true,
+  "cases": [
+    {
+      "name": "default",
+      "passed": true,
+      "images": [
+        "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333"
+      ],
+      "expected": [
+        "app"
+      ],
+      "extractors": {
+        "regex": [
+          "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333"
+        ],
+        "structured": [
+          "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333"
+        ]
+      }
+    },
+    {
+      "name": "with-metrics",
+      "passed": true,
+      "images": [
+        "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333",
+        "cgr.test/chainguard/test/metrics@sha256:177a7ea3611fe6b138557deaf44941614b66c0ece1766308044c8b65c8ba2123"
+      ],
+      "expected": [
+        "app",
+        "metrics"
+      ],
+      "extractors": {
+        "regex": [
+          "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333",
+          "cgr.test/chainguard/test/metrics@sha256:177a7ea3611fe6b138557deaf44941614b66c0ece1766308044c8b65c8ba2123"
+        ],
+        "structured": [
+          "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333",
+          "cgr.test/chainguard/test/metrics@sha256:177a7ea3611fe6b138557deaf44941614b66c0ece1766308044c8b65c8ba2123"
+        ]
+      }
+    }
+  ]
+}

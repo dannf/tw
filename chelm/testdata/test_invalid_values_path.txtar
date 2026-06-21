@@ -1,0 +1,40 @@
+# Values mapping references non-existent path in chart - caught by validation
+! chelm test cg.json --chart=chart
+stderr 'image "app" sets value at path nonexistent.deeply.nested.image'
+stderr 'no key at that path'
+
+-- cg.json --
+{
+  "images": {
+    "app": {
+      "values": {
+        "nonexistent": {"deeply": {"nested": {"image": "${ref}"}}}
+      }
+    }
+  },
+  "test": {
+    "cases": [
+      {"name": "default", "images": ["app"]}
+    ]
+  }
+}
+
+-- chart/Chart.yaml --
+apiVersion: v2
+name: test-chart
+version: 0.1.0
+
+-- chart/templates/deployment.yaml --
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.image }}
+
+-- chart/values.yaml --
+image: nginx:latest

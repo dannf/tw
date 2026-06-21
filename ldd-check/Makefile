@@ -7,6 +7,9 @@ MELANGE_INSTALL_PATH = $(MELANGE_CONTEXTDIR)/usr/bin
 build:
 	chmod +x ldd-check
 
+test:
+	@./test.sh
+
 melange-install: build
 	echo $@
 	mkdir -p $(MELANGE_INSTALL_PATH)

@@ -1,6 +1,6 @@
 package:
   name: tw
-  version: 0.0.3
+  version: "999.0.0_git"
   epoch: 0
   description: Testing tools
   options:
@@ -19,12 +19,11 @@ environment:
       - go
 
 pipeline:
-  # NOTE: Left in for completeness
-  # - uses: git-checkout
-  #   with:
-  #     repository: https://github.com/chainguard-dev/tw
-  #     tag: v${{package.version}}
-  #     expected-commit: ...
+  #wolfi#- uses: git-checkout
+  #wolfi#  with:
+  #wolfi#    repository: https://github.com/chainguard-dev/tw
+  #wolfi#    tag: v${{package.version}}
+  #wolfi#    expected-commit: 52c18c170c1cdbca5ec6b53aa0bfdb0b8d376746
 
   # Make the tw binary in the main package so we don't end up with `tw-tw`
   - runs: |
@@ -33,6 +32,17 @@ pipeline:
   - uses: strip
 
 subpackages:
+  - name: twt
+    options:
+      no-provides: true
+    pipeline:
+      - runs: |
+          install -Dm755 tw/bin/twt ${{targets.contextdir}}/usr/bin/twt
+      - uses: strip
+    test:
+      pipeline:
+        - runs: stat /usr/bin/twt
+
   - name: ldd-check
     options:
       no-provides: true
@@ -50,6 +60,116 @@ subpackages:
             [ -f /usr/bin/ldd-check ]
             [ -x /usr/bin/ldd-check ]
 
+  - name: tw-pip-check
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - busybox
+        - pip-zipapp
+    pipeline:
+      - runs: |
+          make -C tw-pip-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/tw-pip-check ]
+            [ -x /usr/bin/tw-pip-check ]
+
+  - name: gem-check
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - apk-tools
+        - busybox
+    pipeline:
+      - runs: |
+          make -C gem-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/gem-check ]
+            [ -x /usr/bin/gem-check ]
+
+  - name: header-check
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - apk-tools
+        - autoconf
+        - build-base
+        - busybox
+    pipeline:
+      - runs: |
+          make -C header-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/header-check ]
+            [ -x /usr/bin/header-check ]
+
+  - name: syspeek
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - binutils
+        - linux-headers
+        - posix-libc-utils
+    pipeline:
+      - runs: |
+          make -C syspeek-tool MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/syspeek ]
+            [ -x /usr/bin/syspeek ]
+
+  - name: ver-check
+    dependencies:
+      runtime:
+        - busybox
+    pipeline:
+      - runs: |
+          make -C ver-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/ver-check ]
+            [ -x /usr/bin/ver-check ]
+
+  - name: help-check
+    dependencies:
+      runtime:
+        - busybox
+    pipeline:
+      - runs: |
+          make -C help-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/help-check ]
+            [ -x /usr/bin/help-check ]
+
+  - name: package-type-check
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - busybox
+        - man-db
+        - texinfo
+    pipeline:
+      - runs: |
+          make -C package-type-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/package-type-check ]
+            [ -x /usr/bin/package-type-check ]
+
   - name: usrmerge-tool
     options:
       no-provides: true
@@ -61,6 +181,105 @@ subpackages:
       pipeline:
         - runs: |
             usrmerge-tool --help
+
+  - name: gosh
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - go-test2json
+    pipeline:
+      - runs: |
+          make -C gosh MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/gosh ]
+            [ -x /usr/bin/gosh ]
+            [ -x /usr/bin/goshr ]
+            [ -f /usr/bin/goshr ]
+            [ -f /usr/bin/gt ]
+            [ -x /usr/bin/gt ]
+        - runs: |
+            cat > /tmp/pass.sh <<EOF
+            #!/usr/bin/env gosh
+            gt_success() {
+                echo "this is going to pass"
+            }
+            EOF
+
+            chmod +x /tmp/pass.sh
+            /tmp/pass.sh
+
+            cat > /tmp/fail.sh <<EOF
+            #!/usr/bin/env gosh
+            gt_fail() {
+                echo "this test is going to fail"
+                cat foo
+            }
+            EOF
+
+            chmod +x /tmp/fail.sh
+            ! /tmp/fail.sh
+
+  - name: verify-service
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - apk-tools
+        - grep
+        - systemd
+    pipeline:
+      - runs: |
+          make -C verify-service MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/verify-service ]
+            [ -x /usr/bin/verify-service ]
+
+  - name: symlink-check
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - busybox
+    pipeline:
+      - runs: |
+          make -C symlink-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/symlink-check ]
+            [ -x /usr/bin/symlink-check ]
+
+  - name: no-docs-check
+    options:
+      no-provides: true
+    dependencies:
+      runtime:
+        - busybox
+    pipeline:
+      - runs: |
+          make -C no-docs-check MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+    test:
+      pipeline:
+        - runs: |
+            [ -f /usr/bin/no-docs-check ]
+            [ -x /usr/bin/no-docs-check ]
+
+  - name: chelm
+    options:
+      no-provides: true
+    pipeline:
+      - runs: |
+          make -C chelm MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
+      - uses: strip
+    test:
+      pipeline:
+        - runs: |
+            chelm --help
 
 # TODO: I'd like to do this, but until we can dynamically generate the dependencies, we need to manually set them
 # data:
@@ -76,9 +295,20 @@ subpackages:
 #       no-provides: true
 #     pipeline:
 #       - runs: |
-#           make -C ${{range.key}} MELANGE_CONTEXDIR=${{targets.contextdir}} melange-install
+#           make -C ${{range.key}} MELANGE_CONTEXTDIR=${{targets.contextdir}} melange-install
 update:
   enabled: true
   github:
     identifier: chainguard-dev/tw
     strip-prefix: v
+
+test:
+  pipeline:
+    - runs: stat /usr/bin/tw
+    - runs: |
+        readlink -v /usr/bin/kgrep
+        readlink -v /usr/bin/kimages
+        readlink -v /usr/bin/ptrace
+        readlink -v /usr/bin/sfuzz
+        readlink -v /usr/bin/shu
+        readlink -v /usr/bin/wassert

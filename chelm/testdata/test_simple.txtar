@@ -1,0 +1,64 @@
+# All images configurable - passes validation
+chelm test cg.json --chart=chart
+cmp stdout expected.json
+
+-- cg.json --
+{
+  "images": {
+    "nginx": {
+      "values": {
+        "image": "${ref}"
+      }
+    }
+  },
+  "test": {
+    "cases": [
+      {"name": "default", "images": ["nginx"]}
+    ]
+  }
+}
+
+-- chart/Chart.yaml --
+apiVersion: v2
+name: test-chart
+version: 0.1.0
+
+-- chart/templates/deployment.yaml --
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+spec:
+  template:
+    spec:
+      containers:
+        - name: nginx
+          image: {{ .Values.image }}
+
+-- chart/values.yaml --
+image: nginx:latest
+
+-- expected.json --
+{
+  "passed": true,
+  "cases": [
+    {
+      "name": "default",
+      "passed": true,
+      "images": [
+        "cgr.test/chainguard/test/nginx@sha256:5be1ecc7935f1dd85635d4feedaf660594030253cc97c9e9ca3819ffeac36b65"
+      ],
+      "expected": [
+        "nginx"
+      ],
+      "extractors": {
+        "regex": [
+          "cgr.test/chainguard/test/nginx@sha256:5be1ecc7935f1dd85635d4feedaf660594030253cc97c9e9ca3819ffeac36b65"
+        ],
+        "structured": [
+          "cgr.test/chainguard/test/nginx@sha256:5be1ecc7935f1dd85635d4feedaf660594030253cc97c9e9ca3819ffeac36b65"
+        ]
+      }
+    }
+  ]
+}

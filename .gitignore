@@ -1,5 +1,10 @@
 **/bin
+package-type-check/package-type-check
 packages/*
 melange-cache/*
 local-melange.rsa*
 melange.rsa*
+tests/.out
+
+# macOS
+.DS_Store

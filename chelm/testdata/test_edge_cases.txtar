@@ -1,0 +1,88 @@
+# Edge cases for image extraction:
+# - Documents without apiVersion/kind should be handled gracefully
+# - Multiple rules matching same document should all apply
+
+chelm test cg.json --chart=chart
+cmp stdout expected.json
+
+-- cg.json --
+{
+  "images": {
+    "app": {
+      "values": {
+        "image": "${ref}"
+      }
+    },
+    "sidecar": {
+      "values": {
+        "sidecarImage": "${ref}"
+      }
+    }
+  },
+  "test": {
+    "cases": [
+      {"name": "default", "images": ["app", "sidecar"]}
+    ]
+  }
+}
+
+-- chart/Chart.yaml --
+apiVersion: v2
+name: test-chart
+version: 0.1.0
+
+-- chart/templates/deployment.yaml --
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+  annotations:
+    # Wildcard annotation rule should match this
+    sidecar.istio.io/proxyImage: {{ .Values.sidecarImage }}
+spec:
+  template:
+    spec:
+      containers:
+        # Deployment-specific rule should match this
+        - name: app
+          image: {{ .Values.image }}
+
+-- chart/templates/configmap.yaml --
+# Document without proper apiVersion/kind - should not crash extraction
+data:
+  config: |
+    some: config
+    value: here
+
+-- chart/values.yaml --
+image: nginx:latest
+sidecarImage: docker.io/istio/proxyv2:1.20.0
+
+-- expected.json --
+{
+  "passed": true,
+  "cases": [
+    {
+      "name": "default",
+      "passed": true,
+      "images": [
+        "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333",
+        "cgr.test/chainguard/test/sidecar@sha256:6c8b4535ccc87f19061c4646189e33d78f01c8b63dc4e3cb2f630b1796ee93b6"
+      ],
+      "expected": [
+        "app",
+        "sidecar"
+      ],
+      "extractors": {
+        "regex": [
+          "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333",
+          "cgr.test/chainguard/test/sidecar@sha256:6c8b4535ccc87f19061c4646189e33d78f01c8b63dc4e3cb2f630b1796ee93b6"
+        ],
+        "structured": [
+          "cgr.test/chainguard/test/app@sha256:a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333",
+          "cgr.test/chainguard/test/sidecar@sha256:6c8b4535ccc87f19061c4646189e33d78f01c8b63dc4e3cb2f630b1796ee93b6"
+        ]
+      }
+    }
+  ]
+}

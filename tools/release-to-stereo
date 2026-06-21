@@ -1,0 +1,115 @@
+#!/bin/sh
+
+# shellcheck disable=SC2015,SC2039,SC2166,SC3043
+set -e
+
+VERBOSITY=1
+# run with 'TWGIT=$PWD' to test locally
+TWGIT=${TWGIT:-https://github.com/chainguard-dev/tw}
+
+stderr() { echo "Error: $*" 1>&2; }
+fail() { [ $# -eq 0 ] || stderr "$@"; exit 1; }
+
+Usage() {
+	cat <<EOF
+Usage: ${0##*/} tag stereo-git-dir/
+
+   Release tw 'tag' to stereo, where 'stereo-git-dir/' is a local chainguard-dev/stereo
+   git checkout.
+
+   A commit will be added to it that has the pipelines/ sync'd.
+EOF
+}
+
+bad_Usage() {
+    [ $# -eq 0 ] || stderr "$@"
+    Usage
+    return 1
+}
+cleanup() {
+	[ -z "${TEMP_D}" -o ! -d "${TEMP_D}" ] || rm -Rf "${TEMP_D}"
+}
+
+debug() {
+	local level="$1"
+    shift
+	[ "$VERBOSITY" -lt "$level" ] && return
+	echo "${@}"
+}
+
+sync_to_dir() {
+	local gdir="$1"
+	# we assume presence of busybox.yaml indicates wolfi, and that tw should be updated.
+	if [ -f "$gdir/busybox.yaml" ]; then
+		debug 1 "updating melange.yaml -> tw.yaml in $gdir"
+	    # search only in lines 1 to 10 for version and epoch
+	    sed -e "1,10s/^\([ ]\+version\): .*/\1: \"${tag#v}\"/" \
+	        -e "1,10s,^\([ ]\+epoch\): .*,\1: 0," \
+	        -e "s,#wolfi#,," \
+	        -e "s,^\([ ]\+expected-commit\): .*$,\1: $cksum," \
+		    "melange.yaml" > "$gdir/tw.yaml"
+	    ( cd "$gdir" && git add tw.yaml )
+	fi
+
+	debug 1 "syncing pipelines to $gdir"
+	for d in pipelines/*/tw; do
+		[ -d "$gdir/$d" ] || mkdir -p "$gdir/$d" ||
+			fail "failed to mkdir in $gdir"
+		cp "$d"/* "$gdir/$d" ||
+			fail "failed cp tw/$d/* -> $gdir/$d"
+		( cd "$gdir" && git add "$d" ) ||
+			fail "failed to git add $d"
+	done
+}
+
+git_commit() {
+    local stereo_git_dir="$1"
+	cd "$stereo_git_dir"
+    git commit -m "tw - bump to $tag"
+}
+
+
+main() {
+	if [ $# -ne 2 ] ; then
+        bad_Usage "got $# args expected 2."
+        return 1
+    fi
+
+	[ "$1" = "--help" ] && { Usage; exit 0; }
+
+	while getopts "hv" opt; do
+		case "$opt" in
+			h) Usage; exit 0;;
+			v) VERBOSITY=$((VERBOSITY+1));;
+			\?) Usage 1>&2;
+				stderr "invalid option -$OPTARG"
+				exit 1;;
+		esac
+	done
+
+	shift $((OPTIND -1))
+
+	local tag="$1"
+	tag=v${tag#v} # chop of 'v' in v0.0.1
+	shift
+
+	local stereo_diri="$1"
+	stereo_dir=$(cd "${stereo_diri}" && pwd) || fail "failed cd $stereo_dir"
+
+	TEMP_D=$(mktemp -d "${TMPDIR:-/tmp}/${0##*/}.XXXXXX") ||
+		fail "failed to make tempdir"
+	trap cleanup EXIT
+
+	cd "$TEMP_D" || fail
+	git clone --tags "$TWGIT" tw || fail "failed clone $TWGIT"
+	cd tw || fail "failed cd into git cloned $TWGIT"
+	cksum=$(git rev-parse "$tag") || fail "$tag did not exist"
+
+	sync_to_dir "${stereo_dir}/os"
+	sync_to_dir "${stereo_dir}/enterprise-packages"
+	sync_to_dir "${stereo_dir}/extra-packages"
+    git_commit "${stereo_dir}"
+}
+
+main "$@"
+# vi: ts=4 noexpandtab

@@ -1,0 +1,48 @@
+# Digest marker at a path that doesn't exist in values.yaml
+! chelm test cg.json --chart=chart
+stderr 'image "app" sets value at path image.digest'
+stderr 'no key at that path'
+
+-- cg.json --
+{
+  "images": {
+    "app": {
+      "values": {
+        "image": {
+          "registry": "${registry}",
+          "repository": "${repo}",
+          "tag": "${tag}",
+          "digest": "${digest}"
+        }
+      }
+    }
+  },
+  "test": {
+    "cases": [
+      {"name": "default", "images": ["app"]}
+    ]
+  }
+}
+
+-- chart/Chart.yaml --
+apiVersion: v2
+name: test-chart
+version: 0.1.0
+
+-- chart/templates/deployment.yaml --
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+
+-- chart/values.yaml --
+image:
+  registry: docker.io
+  repository: library/nginx
+  tag: latest

@@ -1,0 +1,98 @@
+#!/bin/sh
+
+error() { echo "ERROR[verify-service]:" "$@"; exit 1; }
+
+cmd="verify-service"
+
+show_help() {
+  cat << EOF
+Usage: $cmd [OPTIONS]
+
+Tool to check service files
+
+Options:
+  -h, --help                    Show this help message and exit
+  --dir                         Dir to root of package check service files [deprecated]
+  --package                     Package to search
+  --skip-files                  Files to skip
+  --man                         Wether or not to run the checks with man pages
+
+Example:
+  $cmd --dir /home/build/melange-out/systemd --skip-files syslog.socket --man true
+EOF
+  exit 0
+}
+
+
+dir=""
+man=""
+skip_files=""
+package_name=""
+
+while [ $# -ne 0 ]; do
+    case "$1" in
+        -h|--help) show_help;;
+        --skip-files) skip_files="$2"
+            shift;;
+        --man) man="$2"
+            shift;;
+        --dir) dir="$2"
+            shift;;
+        --package) package_name="$2"
+            shift;;
+        --*) error "Unkown argument '$1'";;
+    esac
+    shift
+done
+
+if [ -n "${package_name}" ] && [ -n "$dir" ]; then
+    error "Cannot provide --package and --dir"
+elif [ -n "$dir" ]; then
+    package_name=${dir##*/}
+fi
+
+[ -n "$package_name" ] || error "Must provide --package"
+
+set -x
+
+# If there's a templated service file systemd-analyze verify
+# will fill in  test_instance for the template. If the
+# test resource doesn't exist verify won't pass.
+# The quaota service need a mountpoint to verify the quota service against.
+# Which casued this but any service that depends on a template will probably
+# need something.
+cat << EOF > /usr/lib/systemd/system/test_instance.mount
+[Unit]
+Description=Test Mount
+DefaultDependencies=no
+Conflicts=umount.target
+Before=local-fs.target umount.target
+
+[Mount]
+What=/dev/null
+Where=/test_instance
+EOF
+
+skip_expr=""
+for skip in $skip_files; do
+    skip_expr="${skip_expr}|${skip}"
+done
+skip_expr="(${skip_expr#|})"
+
+echo "Package name: ${package_name}"
+echo "Skipping files: ${skip_expr}"
+service_files=$(mktemp)
+apk info --installed -L "${package_name}" |
+    grep -E 'usr/lib/systemd/system/.*.(service|socket)$' |
+    grep -vE "/${skip_expr}$" > "${service_files}"
+
+if [ ! -s "${service_files}" ]; then
+    echo "No service or socket files found!"
+    exit 1
+fi
+
+while read file; do
+    systemd-analyze verify --man="${man}" "${file}"
+done < "${service_files}"
+
+rm "${service_files}"

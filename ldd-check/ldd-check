@@ -1,50 +1,128 @@
 #!/bin/sh
-# shellcheck disable=SC2317,SC2166,SC3043,SC2162,SC2086
+TEMP_D=""
 set +x
 set -f
 info() { echo "INFO[ldd-check]:" "$@"; }
 error() { echo "ERROR[ldd-check]:" "$@"; exit 1; }
 fail() { echo "FAIL[ldd-check]:" "$@"; fails=$((fails+1)); }
 pass() { echo "PASS[ldd-check]:" "$@"; passes=$((passes+1)); }
-cleanup() { [ -n "$tmpd" -o -z "$tmpd" ] && return 0; rm -Rf "$tmpd"; }
+cleanup() {
+    [ -n "$TEMP_D" ] || return 0;
+    rm -Rf "$TEMP_D";
+}
+
+show_help() {
+  cat << EOF
+Usage: ldd-check [OPTIONS]
+
+Tool to check for missing shared library dependencies.
+
+Options:
+  -h, --help                   Show this help message and exit
+  --files=PATH, --files PATH   Specify files to check
+  --packages=PKG, --packages PKG
+                              Specify packages to check
+  --extra-library-paths=PATH, --extra-library-paths PATH
+                              Additional paths to search for libraries
+  --exclude-files=PATH, --exclude-files PATH
+                              Specify files to be excluded from the check
+  --verbose=BOOL, --verbose BOOL
+                              Enable verbose output (true or false)
+
+Examples:
+  ldd-check --files=/usr/bin/ls
+  ldd-check --packages=bash
+  ldd-check --files=/bin/sh --verbose=true
+  ldd-check --packages=bash --exclude-files="/bin/ls"
+EOF
+  exit 0
+}
 
 files=""
 packages=""
+EXCLUDES=""
 VERBOSE=false
 
+EXTRA_LIB_PATHS=""
 while [ $# -ne 0 ]; do
     case "$1" in
+        -h|--help) show_help;;
+        --extra-library-paths=*)
+            EXTRA_LIB_PATHS="${EXTRA_LIB_PATHS:+ ${EXTRA_LIB_PATHS}}${1#*=}";;
+        --extra-library-paths)
+            EXTRA_LIB_PATHS="${EXTRA_LIB_PATHS:+ ${EXTRA_LIB_PATHS}}$2";
+            shift;;
+        --exclude-files=*) EXCLUDES="${EXCLUDES} ${1#*=}";;
+        --exclude-files) EXCLUDES="${EXCLUDES} $2"; shift;;
         --files=*) files="${files} ${1#*=}";;
         --files) files="${files} $2"; shift;;
-        --packages=*) packages="${packages} ${1#*=}";;
-        --packages) packages="${packages} $2"; shift;;
-        --verbose=*) VERBOSE=${1#*=};;
-        --verbose) VERBOSE=$2; shift;;
+        --packages=*)
+            if [ "${1#*=}" = "none" ]; then
+                packages=""
+            else
+                packages="${packages} ${1#*=}"
+            fi
+            ;;
+        --packages)
+            if [ "$2" = "none" ]; then
+                packages=""
+            else
+                packages="${packages} $2"
+            fi
+            shift;;
+        --verbose=*) VERBOSE="${1#*=}";;
+        --verbose) VERBOSE="$2"; shift;;
+        --*) error "Unknown argument '$1'";;
     esac
     shift
 done
 files=${files# }
 packages=${packages# }
-if [ -n "$packages" ] && [ -n "$files" ]; then
-    error "Cannot provide both packages and files"
-fi
+EXCLUDES=${EXCLUDES# }
 
 case "$VERBOSE" in
   true|false) :;;
   *) error "--verbose must be 'true' or 'false'. found '$VERBOSE'";;
 esac
 
-[ -n "${files}${packages}" ] || error "No files or packages specified"
+[ -n "${files}${packages}" ] || show_help
 
-tmpd=$(mktemp -d) || fail "ERROR: failed to create tmpdir"
+TEMP_D=$(mktemp -d) || fail "ERROR: failed to create tmpdir"
 trap cleanup EXIT
 
-fails=0
-passes=0
 export LANG=C
 
 vmsg() {
   [ "$VERBOSE" = "false" ] || echo "$@"
+}
+
+# is_excluded(file_path)
+# returns 0 if file should be excluded, 1 if not
+is_excluded() {
+  local file="$1" exclude=""
+  [ -n "$EXCLUDES" ] || return 1
+
+  for exclude in $EXCLUDES; do
+    [ "${file}" = "${exclude}" ] && return 0
+  done
+  return 1
+}
+
+# join_nonempty(delimiter, tok1, tok2, tok3, ...)
+# return a string joined on delimiter with empty strings removed.
+#   join_nonempty(":", "tok3", "", "tok2", "tok1") = "tok1:tok2:tok3"
+join_nonempty() {
+   local del="$1" tok="" val=""
+   shift
+   for tok in "$@"; do
+      [ -n "$tok" ] || continue
+      if [ -n "$val" ]; then
+         val="$val$del$tok"
+      else
+         val="$tok"
+      fi
+   done
+   echo "$val"
 }
 
 failormsg() {
@@ -76,8 +154,13 @@ check_output() {
 
 check_file() {
   local f="$1" insist_dyn="$2" rc="0"
-  local outf="$tmpd/ldd.stdout" errf="$tmpd/ldd.sterr"
-  local ld_library_path="$LD_LIBRARY_PATH"
+  local outf="$TEMP_D/ldd.stdout" errf="$TEMP_D/ldd.sterr"
+  local ldpath="" dirldpath=""
+
+  if is_excluded "$f"; then
+    info "$f: excluded"
+    return 0
+  fi
 
   if [ ! -e "$f" ]; then
     failormsg "$insist_dyn" "$f: did not exist"
@@ -90,12 +173,21 @@ check_file() {
 
   case "$f" in
     *python*site-packages*)
-      [ -n "$ld_library_path" ] && ld_library_path=$ld_library_path:
-      ld_library_path=$(dirname "$f")
-      vmsg "Added python site package directory to ld_library_path, result is $ld_library_path"
+      dirldpath=$(dirname "$f")
+      vmsg "Adding python site package directory '$dirldpath' to ld_library_path";;
+    /usr/lib/jvm/*/lib/server/*)
+      dirldpath=$(dirname "$f")
+      vmsg "Adding JVM server '$dirldpath' to ld_library_path";;
+    /usr/lib/jvm/*/lib/*)
+      dirldpath=$(dirname "$f")/server
+      vmsg "Adding JVM server '$dirldpath' to ld_library_path";;
   esac
 
-  LD_LIBRARY_PATH="$ld_library_path" ldd "$f" >"$outf" 2>"$errf" || rc=$?
+  ldpath=$(join_nonempty ":" "$dirldpath" "$EXTRA_LIB_PATHS" "$LD_LIBRARY_PATH") ||
+      error "unexpected failure in join_nonempty(:," \
+        "$LD_LIBRARY_PATH, $dirldpath, $EXTRA_LIB_PATHS)"
+
+  LD_LIBRARY_PATH="$ldpath" ldd "$f" >"$outf" 2>"$errf" || rc=$?
 
   if [ $rc -eq 1 ]; then
     if grep -q 'not a dynamic executable' "$errf"; then
@@ -117,23 +209,28 @@ check_file() {
 test_files_in() {
   local f=""
   echo "[ldd-check] Testing binaries in package $pkg"
-  apk info -eq "$pkg" > /dev/null ||
+  apk info --installed -q "$pkg" > /dev/null ||
     error "Package $pkg is not installed";
-  apk info -Lq "$pkg" > "$tmpd/$pkg.list"
+  apk info --installed -Lq "$pkg" > "$TEMP_D/$pkg.list"
   while read f; do
     [ -n "$f" ] || continue
     check_file "/$f" false
-  done < "$tmpd/$pkg.list"
+  done < "$TEMP_D/$pkg.list"
 }
 
+fails=0
+passes=0
+# shellcheck disable=SC2086
 set -- $files
 for f in "$@"; do
   check_file "$f" true
 done
+# shellcheck disable=SC2086
 set -- $packages
 for pkg in "$@"; do
   test_files_in "$pkg"
 done
 info "tested $((passes+fails)) files with ldd." \
   "$passes passes. $fails fails."
-exit $fails
+
+[ $fails -eq 0 ] || exit 1
